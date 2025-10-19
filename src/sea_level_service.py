@@ -34,8 +34,8 @@ class SeaLevelService:
             2. Distance to sea level (provide brief assessment with context)
             3. Distance to sea level: [X] km (only the numerical distance)
             4. Distance to water: [X] km (only the numerical distance)
-            
-            Make sure to include all 4 numbered points in your response. Keep the response concise and informative.
+
+            Keep the response concise and informative. Return the distance in metres as a number only with no additional text.
             """
 
             response = self.client.chat.completions.create(
