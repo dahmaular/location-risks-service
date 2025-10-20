@@ -39,7 +39,8 @@ class SeaLevelService:
             """
 
             response = self.client.chat.completions.create(
-                model="gpt-4.1-2025-04-14",
+                # model="gpt-4.1-2025-04-14",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that provides location risk assessments."},
                     {"role": "user", "content": prompt}

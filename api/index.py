@@ -16,21 +16,83 @@ sys.path.insert(0, parent_dir)
 class handler(BaseHTTPRequestHandler):
     """Vercel-compatible HTTP handler class"""
 
+    def __init__(self, *args, **kwargs):
+        """Initialize handler with config"""
+        # Initialize config for security validation
+        try:
+            from src.config import Config
+            self.config = Config()
+        except Exception as e:
+            self.config = None
+            print(
+                f"Warning: Could not load config for security validation: {e}")
+
+        super().__init__(*args, **kwargs)
+
+    def _validate_api_security(self):
+        """Validate API key and vendor ID from headers"""
+        # Get headers (case-insensitive)
+        api_key = self.headers.get(
+            'X-API-Key') or self.headers.get('x-api-key')
+        vendor_id = self.headers.get(
+            'X-Vendor-ID') or self.headers.get('x-vendor-id')
+
+        # Check if security headers are present
+        if not api_key:
+            return False, {"error": "Missing X-API-Key header", "code": "MISSING_API_KEY"}
+
+        if not vendor_id:
+            return False, {"error": "Missing X-Vendor-ID header", "code": "MISSING_VENDOR_ID"}
+
+        # Check if config is available
+        if not self.config:
+            return False, {"error": "Server configuration error", "code": "CONFIG_ERROR"}
+
+        # Validate credentials using config
+        if not self.config.validate_credentials(api_key, vendor_id):
+            # Determine which credential is invalid for better error messaging
+            if api_key != self.config.get_api_key():
+                return False, {"error": "Invalid API key", "code": "INVALID_API_KEY"}
+            else:
+                return False, {"error": "Invalid vendor ID", "code": "INVALID_VENDOR_ID"}
+
+        # Both credentials are valid
+        return True, {"vendor_id": vendor_id, "api_key": api_key}
+
+    def _is_public_endpoint(self, path):
+        """Check if the endpoint is public (no auth required)"""
+        public_endpoints = ['/', '/health', '/docs']
+        return path in public_endpoints
+
     def do_GET(self):
         """Handle GET requests"""
         try:
             parsed_path = urlparse(self.path)
             path = parsed_path.path
 
+            # Check if endpoint requires authentication
+            if not self._is_public_endpoint(path):
+                is_valid, auth_result = self._validate_api_security()
+                if not is_valid:
+                    self._send_response(401, auth_result)
+                    return
+
             if path == '/' or path == '':
                 response_data = {
                     "message": "Location Risk Assessment API",
                     "version": "1.0.0",
                     "endpoints": {
-                        "/analyze": "POST - Analyze location risks",
-                        "/sea-level": "POST - Analyze sea level",
-                        "/health": "GET - Health check",
-                        "/docs": "GET - API Documentation"
+                        "/analyze": "POST - Analyze location risks (requires auth)",
+                        "/sea-level": "POST - Analyze sea level (requires auth)",
+                        "/health": "GET - Health check (public)",
+                        "/docs": "GET - API Documentation (public)"
+                    },
+                    "authentication": {
+                        "required_headers": {
+                            "X-API-Key": "Your API key",
+                            "X-Vendor-ID": "Your vendor identifier"
+                        },
+                        "public_endpoints": ["/", "/health", "/docs"]
                     }
                 }
                 self._send_response(200, response_data)
@@ -52,6 +114,18 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests"""
         try:
+            parsed_path = urlparse(self.path)
+            path = parsed_path.path
+
+            # Validate API security for all POST endpoints
+            is_valid, auth_result = self._validate_api_security()
+            if not is_valid:
+                self._send_response(401, auth_result)
+                return
+
+            # Extract vendor info for logging/tracking
+            vendor_id = auth_result.get('vendor_id')
+
             # Import services here to avoid module-level import issues
             from src.location_risk_service import LocationRiskService
             from src.sea_level_service import SeaLevelService
@@ -61,9 +135,6 @@ class handler(BaseHTTPRequestHandler):
             config = Config()
             risk_service = LocationRiskService(config)
             sea_level_service = SeaLevelService(config)
-
-            parsed_path = urlparse(self.path)
-            path = parsed_path.path
 
             # Parse request body
             content_length = int(self.headers.get('Content-Length', 0))
@@ -91,11 +162,14 @@ class handler(BaseHTTPRequestHandler):
                         "location": location,
                         "risk_assessment": risk_assessment,
                         "success": True,
-                        "error": None
+                        "error": None,
+                        "vendor_id": vendor_id,
+                        "timestamp": self._get_timestamp()
                     }
                     self._send_response(200, response_data)
                 except Exception as e:
-                    self._handle_service_error(e, location, "risk_assessment")
+                    self._handle_service_error(
+                        e, location, "risk_assessment", vendor_id)
 
             elif path == '/sea-level':
                 try:
@@ -105,12 +179,14 @@ class handler(BaseHTTPRequestHandler):
                         "location": location,
                         "sea_level_assessment": sea_level_assessment,
                         "success": True,
-                        "error": None
+                        "error": None,
+                        "vendor_id": vendor_id,
+                        "timestamp": self._get_timestamp()
                     }
                     self._send_response(200, response_data)
                 except Exception as e:
                     self._handle_service_error(
-                        e, location, "sea_level_assessment")
+                        e, location, "sea_level_assessment", vendor_id)
 
             else:
                 self._send_response(404, {"error": "Route not found"})
@@ -120,7 +196,7 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_response(500, {"error": f"Server error: {str(e)}"})
 
-    def _handle_service_error(self, error, location, assessment_type):
+    def _handle_service_error(self, error, location, assessment_type, vendor_id=None):
         """Handle service-specific errors"""
         error_message = str(error)
         if "401" in error_message or "invalid_api_key" in error_message:
@@ -137,9 +213,16 @@ class handler(BaseHTTPRequestHandler):
             "location": location,
             assessment_type: None,
             "success": False,
-            "error": error_detail
+            "error": error_detail,
+            "vendor_id": vendor_id,
+            "timestamp": self._get_timestamp()
         }
         self._send_response(status_code, response_data)
+
+    def _get_timestamp(self):
+        """Get current timestamp in ISO format"""
+        from datetime import datetime
+        return datetime.utcnow().isoformat() + 'Z'
 
     def _send_response(self, status_code, data):
         """Send JSON response"""
@@ -147,7 +230,8 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers',
+                         'Content-Type, X-API-Key, X-Vendor-ID')
         self.end_headers()
 
         response_json = json.dumps(data, indent=2)
@@ -208,12 +292,23 @@ class handler(BaseHTTPRequestHandler):
     </div>
 
     <div class="endpoint">
+        <h3>🔐 Authentication Required</h3>
+        <p>All POST endpoints require valid authentication headers. Contact administrator for credentials.</p>
+        <div class="example">
+<pre>X-API-Key: [Valid API Key Required]
+X-Vendor-ID: [Valid Vendor ID Required]</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
         <span class="method post">POST</span>
         <span class="path">/analyze</span>
-        <div class="description">Analyze location risks using AI</div>
+        <div class="description">Analyze location risks using AI (requires authentication)</div>
         <div class="example">
 <pre>curl -X POST https://your-domain.vercel.app/analyze \\
   -H "Content-Type: application/json" \\
+  -H "X-API-Key: [VALID_API_KEY]" \\
+  -H "X-Vendor-ID: [VALID_VENDOR_ID]" \\
   -d '{
     "location": "San Francisco, CA"
   }'</pre>
@@ -223,7 +318,9 @@ class handler(BaseHTTPRequestHandler):
   "location": "San Francisco, CA",
   "risk_assessment": "Detailed AI-generated risk analysis...",
   "success": true,
-  "error": null
+  "error": null,
+  "vendor_id": "[VALID_VENDOR_ID]",
+  "timestamp": "2025-10-20T10:30:00Z"
 }</pre>
         </div>
     </div>
@@ -231,10 +328,12 @@ class handler(BaseHTTPRequestHandler):
     <div class="endpoint">
         <span class="method post">POST</span>
         <span class="path">/sea-level</span>
-        <div class="description">Analyze sea level and water distance for a location</div>
+        <div class="description">Analyze sea level and water distance for a location (requires authentication)</div>
         <div class="example">
 <pre>curl -X POST https://your-domain.vercel.app/sea-level \\
   -H "Content-Type: application/json" \\
+  -H "X-API-Key: [VALID_API_KEY]" \\
+  -H "X-Vendor-ID: [VALID_VENDOR_ID]" \\
   -d '{
     "location": "Miami, FL"
   }'</pre>
@@ -244,7 +343,9 @@ class handler(BaseHTTPRequestHandler):
   "location": "Miami, FL",
   "sea_level_assessment": "1. Distance to water assessment...\\n2. Distance to sea level assessment...\\n3. Distance to sea level: 0 km\\n4. Distance to water: 1.2 km",
   "success": true,
-  "error": null
+  "error": null,
+  "vendor_id": "[VALID_VENDOR_ID]",
+  "timestamp": "2025-10-20T10:30:00Z"
 }</pre>
         </div>
     </div>
@@ -308,5 +409,6 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers',
+                         'Content-Type, X-API-Key, X-Vendor-ID')
         self.end_headers()

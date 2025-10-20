@@ -16,9 +16,13 @@ A Python service for assessing location-based risks using OpenAI API. Provides b
    ```
 
 3. Configure environment variables:
-   Create a `.env` file and add your OpenAI API key:
+   Create a `.env` file and add your configuration:
    ```
    OPENAI_API_KEY=your_openai_api_key_here
+   
+   # API Security Configuration
+   API_KEY=your_api_key_here
+   VENDOR_ID=your_vendor_id_here
    ```
 
 ## Usage
@@ -124,6 +128,28 @@ curl -X POST "http://localhost:8000/sea-level" \
   - `config.py` - Configuration management
 - `requirements.txt` - Python dependencies
 - `.env` - Environment variables (create this file)
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `OPENAI_API_KEY` | OpenAI API key for AI services | Yes | - |
+| `API_KEY` | API key for client authentication | No | `4590afd6-c4ed-43f1-8f8d` |
+| `VENDOR_ID` | Vendor ID for client authentication | No | `c8w3e` |
+
+### Security Configuration
+
+The API uses header-based authentication for protected endpoints:
+- **Public endpoints**: `/`, `/health`, `/docs` (no authentication required)
+- **Protected endpoints**: `/analyze`, `/sea-level` (require `X-API-Key` and `X-Vendor-ID` headers)
+
+To update the authentication credentials, modify the values in your `.env` file:
+```bash
+API_KEY=your_new_api_key
+VENDOR_ID=your_new_vendor_id
+```
 
 ## Development
 
