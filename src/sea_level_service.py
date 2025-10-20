@@ -32,14 +32,15 @@ class SeaLevelService:
             
             1. Distance to water (provide brief assessment with context)
             2. Distance to sea level (provide brief assessment with context)
-            3. Distance to sea level: [X] km (only the numerical distance)
-            4. Distance to water: [X] km (only the numerical distance)
+            3. Distance to sea level: [X] m (only the numerical distance)
+            4. Distance to water: [X] m (only the numerical distance)
 
-            Keep the response concise and informative. Return the distance in metres as a number only with no additional text.
+            Keep the response concise and informative. Return the distance in metres as a number only with no additional assessment.
             """
 
             response = self.client.chat.completions.create(
-                model="gpt-4.1-2025-04-14",
+                # model="gpt-4.1-2025-04-14",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that provides location risk assessments."},
                     {"role": "user", "content": prompt}
